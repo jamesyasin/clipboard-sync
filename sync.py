@@ -253,9 +253,23 @@ class Monitor:
         self.running = False
         self._names = None          # 终端名称列的去重集合（唯一值）；None=还没加载
         self._names_ready = threading.Event()
+        # ---- 空白行缓存池（2026-11-02：修「收到店名后建行要十几秒」）----
+        # 以前每个店名都要重新翻一遍整张表（365 行按 100/页要 4 次请求 ≈ 12s）。
+        # 现在一次扫描攒一批空行放这儿，连续建行直接挨个取，几乎 0 耗时。
+        self._blank_pool = []       # [(record_id, 界面行号)]，按界面从上到下
+        self._blank_ts = 0.0        # 池子生成时刻（超过 TTL 就重新扫，避免用到失效行）
+        self._blank_lock = threading.Lock()
+        self._blank_ttl = float((self.cfg.get("text", {}) or {}).get("blank_pool_ttl", 90))
+        # 「刚扫过、确认表里没有空行」的负缓存：这种时候每个店名都要新建行，
+        # 没必要每次都再翻一遍整张表（实测 428 次建行里大部分是这种情况）。
+        self._blank_empty_ts = 0.0
+        self._blank_empty_ttl = float((self.cfg.get("text", {}) or {}).get("blank_empty_ttl", 30))
         if not dry:
             threading.Thread(target=self._load_unique_names, daemon=True,
                              name="unique-names").start()
+            # 启动即后台预热一批空行：等你复制第一个店名时已经准备好了
+            threading.Thread(target=self._warm_blank_pool, daemon=True,
+                             name="blank-warm").start()
         else:
             self._names_ready.set()     # dry 模式不加载，也不让等待卡住
         log(f"{VERSION} | {self.fs.mode} 模式 | 并发 {self.workers} | dry={dry}")
@@ -609,16 +623,32 @@ class Monitor:
         mode = tcfg.get("row_selection", "auto")     # auto | new | blank
         rid, used = None, "new"
         if mode in ("auto", "blank"):
-            rid = self._find_blank(tcfg)
+            rid = self._take_blank(tcfg)          # 多数情况走缓存池，0 次网络请求
             if rid:
                 used = "blank"
         ms = int((time.time() - t0) * 1000)
         if rid:
-            if not self.dry:
-                self.fs.update_record(rid, fields)
-            log(f"店名「{text}」-> 写入空行 {rid[-6:]}")
-            action = "写入空白行"
-        else:
+            try:
+                if not self.dry:
+                    self.fs.update_record(rid, fields)
+                log(f"店名「{text}」-> 写入空行 {rid[-6:]}")
+                action = "写入空白行"
+            except Exception as e:
+                # 缓存的空行可能已失效（在飞书界面里被删掉 / 被手动填了内容）：
+                # 丢掉整池重新扫一次再写；还不行就退回新建行。
+                log(f"写入空行失败（{e}），重新扫描后重试")
+                rid = None
+                rid2 = self._take_blank(tcfg, force=True)
+                if rid2:
+                    try:
+                        if not self.dry:
+                            self.fs.update_record(rid2, fields)
+                        rid = rid2
+                        log(f"店名「{text}」-> 写入空行 {rid[-6:]}")
+                        action = "写入空白行"
+                    except Exception:
+                        rid = None
+        if not rid:
             if mode == "blank":
                 reason = "没找到空白行，且 row_selection=blank（不新建）"
                 log(reason)
@@ -630,8 +660,10 @@ class Monitor:
             action = "新建行"
 
         # 唯一值检查：店名写进去后唯一值没增加（= 这个名字表里已存在）-> 红字提醒有重复数据
-        if not self.dry:
-            self._names_ready.wait(timeout=15)   # 等后台拉完（首次约 10s），超时就跳过检查
+        # 后台拉全量唯一值要 10s+，这里只等 3s：等不到就跳过本次检查，
+        # 不能让「等唯一值」把建行拖慢（以前等 15s，启动后第一个店名会明显卡一下）。
+        if not self.dry and not self._names_ready.wait(timeout=3):
+            log("唯一值尚未加载完，跳过本次重复检查（不影响写入）")
         if not self.dry and self._names is not None:
             nm = text.strip()
             if nm and nm in self._names:
@@ -662,21 +694,67 @@ class Monitor:
                 ms=int((time.time() - t0) * 1000))
         self.flush_pending()
 
-    def _find_blank(self, tcfg):
-        """找一条真正没有数据的行（名称 + 各屏位都为空）。"""
-        labels = tcfg.get("blank_check_fields") or \
-            ["终端名称", "第一屏", "第二屏", "第三屏", "第四屏"]
-        # max_scan = 从上往下最多扫多少行（要盖得住「在表格底部新建的一批空白行」）
+    def _blank_labels(self, tcfg):
+        return (tcfg.get("blank_check_fields") or
+                ["终端名称", "第一屏", "第二屏", "第三屏", "第四屏"])
+
+    def _warm_blank_pool(self, tcfg=None, want=12):
+        """后台扫一批空行放进池子（启动预热 / 池子见底时补货用）。"""
         try:
-            rid, _f = self.fs.find_blank_row(labels, max_scan=int(tcfg.get("blank_scan_limit", 600)))
-            if rid:
-                pos = getattr(self.fs, "last_blank_pos", None)
-                log(f"空白行：界面第 {pos} 行（{rid[-6:]}）" if pos
-                    else f"空白行 {rid[-6:]}")
-            return rid
+            tcfg = tcfg or (self.cfg.get("text", {}) or {})
+            rows = self.fs.find_blank_rows(
+                self._blank_labels(tcfg),
+                max_scan=int(tcfg.get("blank_scan_limit", 600)), want=want)
+            with self._blank_lock:
+                self._blank_pool = rows
+                self._blank_ts = time.time()
+                self._blank_empty_ts = 0.0 if rows else time.time()
+            if rows:
+                log(f"空白行已就绪：攒了 {len(rows)} 行（界面第 {rows[0][1]} 行起）")
+        except Exception:
+            pass
+
+    def _take_blank(self, tcfg, force=False):
+        """取一条空行。
+
+        优先从缓存池拿（0 次网络请求，几乎瞬时）；池子空了 / 超过 TTL 才扫表，
+        并且一次扫就顺带攒一批（want=12），这样连续建十几个店名只扫一次表。
+        force=True 表示池子可能失效了，强制重新扫描。
+        """
+        if not force:
+            with self._blank_lock:
+                if self._blank_pool and (time.time() - self._blank_ts) < self._blank_ttl:
+                    rid, pos = self._blank_pool.pop(0)
+                    self.fs.last_blank_pos = pos
+                    log(f"空白行：界面第 {pos} 行（{rid[-6:]}）")
+                    return rid
+                self._blank_pool = []          # 过期，丢掉
+                # 刚扫过且确认没空行 -> 这段时间内不再重复扫，直接让调用方新建行
+                if self._blank_empty_ts and \
+                        (time.time() - self._blank_empty_ts) < self._blank_empty_ttl:
+                    return None
+        try:
+            rows = self.fs.find_blank_rows(
+                self._blank_labels(tcfg),
+                max_scan=int(tcfg.get("blank_scan_limit", 600)), want=12)
         except Exception as e:
             log(f"查找空白行失败: {e}")
             return None
+        with self._blank_lock:
+            self._blank_pool = rows[1:] if rows else []
+            self._blank_ts = time.time()
+            self._blank_empty_ts = 0.0 if rows else time.time()
+        if not rows:
+            log("表里没有空白行 -> 新建一行（30 秒内不再重复扫表）")
+            return None
+        rid, pos = rows[0]
+        self.fs.last_blank_pos = pos
+        log(f"空白行：界面第 {pos} 行（{rid[-6:]}）")
+        return rid
+
+    def _find_blank(self, tcfg):
+        """找一条真正没有数据的行（名称 + 各屏位都为空）。兼容旧调用。"""
+        return self._take_blank(tcfg)
 
     def _target(self, record_id, label):
         fid = self.fmap.get(label, label)

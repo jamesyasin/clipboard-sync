@@ -463,7 +463,9 @@ class Feishu:
         page_token = None
         got = 0
         while got < max_rows:
-            params = {"page_size": min(max(int(page_size), 1), 100)}
+            # 飞书单页上限 500。用满它：365 行的表一次请求就拿到（约 4s），
+            # 否则按 100/页要翻 4 次 ≈ 12s —— 这就是「收到店名后建行很慢」的主因。
+            params = {"page_size": min(max(int(page_size), 1), 500)}
             if self.view_id:
                 params["view_id"] = self.view_id      # 按界面视图顺序返回
             if field_ids:
@@ -493,6 +495,33 @@ class Feishu:
             if not page_token:
                 break
 
+    def find_blank_rows(self, check_labels, max_scan=None, want=1):
+        """按界面从上到下找前 want 条「真正没有数据」的行。
+
+        一次扫描把后面要用的空行一起攒出来（返回 [(record_id, 行号), ...]），
+        这样连续建十几个店名只需要扫一次表，不用每个店名都重新翻一遍。
+
+        顺序由 view_id 保证（见 iter_records 的说明）。
+        """
+        if not check_labels:
+            return []
+        n = int(max_scan or 500)
+        want = max(int(want or 1), 1)
+        ids = [self.fmap.get(k, k) for k in check_labels]
+        out = []
+        try:
+            for i, r in enumerate(self.iter_records(field_ids=ids, page_size=500,
+                                                    max_rows=n), 1):
+                f = r.get("fields") or {}
+                if all(is_blank(f.get(fid)) for fid in ids):
+                    out.append((r.get("record_id"), i))
+                    if len(out) >= want:
+                        break
+        except Exception as e:
+            if self.log:
+                self.log(f"扫描空白行失败: {e}")
+        return out
+
     def find_blank_row(self, check_labels, limit=None, max_scan=None):
         """按界面从上到下找第一条「真正没有数据」的行。
 
@@ -503,21 +532,13 @@ class Feishu:
         默认给得比较宽，这样「在表格底部新建的一批空白行」也能被扫到
         （以前只扫前 50 行，底部新建的空行扫不到 -> 退化成又新建一行）。
         """
-        if not check_labels:
+        rows = self.find_blank_rows(check_labels, max_scan=max_scan, want=1)
+        if not rows:
+            self.last_blank_pos = None
             return None, None
-        n = int(max_scan or limit or 500)
-        ids = [self.fmap.get(k, k) for k in check_labels]
-        self.last_blank_pos = None          # 命中行在界面里的行号（1 起），供日志核对
-        try:
-            for i, r in enumerate(self.iter_records(field_ids=ids, max_rows=n), 1):
-                f = r.get("fields") or {}
-                if all(is_blank(f.get(fid)) for fid in ids):
-                    self.last_blank_pos = i
-                    return r.get("record_id"), f
-        except Exception as e:
-            if self.log:
-                self.log(f"扫描空白行失败: {e}")
-        return None, None
+        rid, pos = rows[0]
+        self.last_blank_pos = pos          # 命中行在界面里的行号（1 起），供日志核对
+        return rid, None
 
     # ---------- 唯一值统计（对应界面底部「唯一值 N」）----------
     def unique_names(self, label="终端名称", limit=3000):
