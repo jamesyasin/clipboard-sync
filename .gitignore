@@ -1,0 +1,39 @@
+# ---------------- 运行数据 / 隐私（绝不入库）----------------
+# 注意：gitignore 不支持行尾注释，注释必须单独一行
+
+# 含飞书 App Secret、表 token、open_id
+config.yaml
+# 基准测试用的真实配置副本
+bench/config.yaml
+
+# token、字段模式、身份缓存
+.cache/
+
+# 最近操作记录、撤回历史、去重指纹
+state.json
+# 待上传队列
+queue.json
+# 面板界面状态
+ui.json
+# 面板心跳
+.alive
+sync.pid
+
+# ---------------- 图片与日志 ----------------
+logs/
+tmp/
+unmatched/
+pending/
+# 本机版本快照（可能含配置），仅本地保留
+versions/
+bench/logs/
+bench/tmp/
+bench/unmatched/
+bench/pending/
+bench/__pycache__/
+
+# ---------------- Python / 系统 ----------------
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
