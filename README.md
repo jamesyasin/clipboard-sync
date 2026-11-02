@@ -311,6 +311,7 @@ clipboard_sync/
 ├── bin/              OCR 可执行程序（Apple Silicon 预编译）
 ├── src/              Swift 源码（Intel Mac 需重新编译）
 ├── test_rules.py     屏位判定回归测试
+├── push_github.sh    一键推送到 GitHub（走 SSH，推送前自动做敏感信息自检）
 ├── start_panel.sh    启动面板
 ├── logs/ tmp/ unmatched/ pending/   运行数据（不入库）
 └── versions/         本机版本快照（不入库）
@@ -366,6 +367,24 @@ clipboard_sync/
 `config.yaml`，所以**整个 `versions/` 目录不入库**，只在你本机保留。
 
 需要回退时，在 `versions/` 里双击对应的 `.command` 脚本即可（会先自动备份当前版本）。
+
+---
+
+## 十六、推送到 GitHub（自己维护仓库）
+
+仓库推送走 **SSH**（`git@github.com`），不需要把 token 写进任何文件。
+
+```bash
+./push_github.sh                    # 推到 jamesyasin/clipboard-sync
+./push_github.sh 别的仓库名          # 推到指定仓库
+GITHUB_USER=你的账号 ./push_github.sh # 换账号
+```
+
+脚本会先做三件事再推：SSH 连通性检查 → 远端仓库是否存在 → **敏感信息自检**
+（密钥 / open_id / `/Users/xxx` 路径，命中就中止）。
+
+> 首次推送前需要在 GitHub 上先建一个**空仓库**（不要勾 README / .gitignore / LICENSE），
+> GitHub 不支持 push 时自动创建仓库。
 
 ---
 
