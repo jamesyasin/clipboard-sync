@@ -80,9 +80,9 @@ def friendly(what: str, d) -> str:
     elif code in (1254005, 1254006, 1254000) or "not found" in m:
         tip = ("\n➜ 表格/app_token 不对，或该应用没被加进这张多维表格。"
                "在多维表格右上角「···」→ 添加文档应用，把应用加为可编辑协作者。")
-    elif code == 1254062:
-        tip = ("\n➜ 单选字段只接受文本，配置里写成了列表（如「终端类型: - 网吧」）。"
-               "程序会自动取第一项；也可到「设置」把默认值直接写成 网吧。")
+    elif code in (1254060, 1254062):
+        tip = ("\n➜ 目标列只接受单个文本，默认值被写成了 YAML 列表（如「终端类型:\\n  - 网吧」）。"
+               "把 config.yaml 里 defaults.终端类型 改成 终端类型: 网吧 即可。")
     elif "field" in m and ("not exist" in m or "invalid" in m):
         tip = "\n➜ 字段 ID 不对（列被删/改名过）。到「设置」重新填 fldXXXXXX（用「测试连接」验证）。"
     return f"{what}：{msg}（code={code}）{tip}"

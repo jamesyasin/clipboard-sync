@@ -326,6 +326,9 @@ clipboard_sync/
 | 截图后没反应 | PixPin「复制图像为文件」设成了具体格式 → 改成「禁用」；或确认图真的进了剪贴板 |
 | `99991672` 应用未开通权限 | 权限开了但**没发版本** → 版本管理与发布 → 创建版本 → 申请发布 |
 | `1254005 / 1254006` | 多维表格没把该应用加为**可编辑**协作者 |
+| `1254041` TableIdNotFound | `app_token` 还指向旧表，但 `table_id` 已经换成新表。换表见下方清单 |
+| `1254005` WrongViewId | `view_id` 是旧表视图，或没填 |
+| `1254060` TextFieldConvFail | 默认值被写成 YAML 列表（「终端类型」下面两行 `- 网吧`）。改成单行 `终端类型: 网吧` |
 | `1254045` FieldNameNotFound | 字段名/字段 ID 映射不对 → 面板设置里检查字段映射 |
 | 写入落到随机一行 | `feishu.view_id` 没填或填错（大小写敏感） |
 | 一直"未识别" | 看 `ocr.cpu_only` 是不是被改成了 `true`；或截图只截到一半没有关键词 |
@@ -333,6 +336,20 @@ clipboard_sync/
 | 撤回后图又冒出来 | 已修复（撤回会取消排队/上传中的任务）。若仍出现，检查是否运行的是旧版本 |
 | OCR 报 `e5rtError` | 神经网络引擎瞬时争用，程序会自动换新进程重试 |
 | 想换台电脑用 | 整包拷贝 + 装依赖即可；飞书权限跟应用走，不用重配。两台电脑**别同时监听同一张表** |
+
+### 换一张多维表格时，必须同步 4 处（漏一个就报错）
+
+从表 URL `https://xxx.feishu.cn/base/<app_token>?table=<table_id>&view=<view_id>` 里取三个 ID：
+
+1. `feishu.app_token`、`feishu.table_id`、`feishu.view_id` —— 三个必须来自同一张表。
+   只改 `table_id` 会报 `1254041`，`view_id` 忘改会报 `1254005`。
+2. `feishu.fields` 的 7 个字段 ID 全部换掉（换表后 ID 一定不同）。左边内部简称别改，
+   只换右边 `fldXXXXXX`；程序会自动把 ID 翻译成线上真实列名再写。
+3. `feishu.defaults` 的值要匹配新表字段类型：新表若是文本列，值必须是字符串，
+   不能是 YAML 列表（否则 `1254060`）。不确定就在「设置」里看，或先跑一次「测试连接」。
+4. 清 `state.json` 里锁定的旧表行（`current_record_id` / `current_name` / `counts` / `ops`），
+   并更新 `.cache/field_mode.json` 的 `app_id|app_token|table_id` key。
+   改完**彻底退出面板再重开**，不要在旧面板里点「保存设置」。
 
 ---
 

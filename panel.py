@@ -1013,7 +1013,10 @@ class Controller(NSObject):
             elif path == "text.blank_check_fields":
                 raw = [x.strip() for x in raw.split(",") if x.strip()]
             elif path == "feishu.defaults.终端类型":
-                raw = [x.strip() for x in raw.split(",") if x.strip()]
+                # 2026-11-16：别再拆成列表。新表「终端类型」是纯文本列(type 1)，
+                # 写 ["网吧"] 会直接 1254060 TextFieldConvFail，导致每个店名都建不了行。
+                # 字符串对文本列和旧表的单选列(type 3) 都兼容，文本框里看到什么就写什么。
+                raw = str(raw).strip()
             setv(data, path, raw)
         idx = self.selpop.indexOfSelectedItem() if self.selpop else 0
         setv(data, "text.row_selection", ["auto", "new", "blank"][idx] if 0 <= idx < 3 else "auto")
