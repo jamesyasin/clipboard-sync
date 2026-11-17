@@ -84,8 +84,10 @@ def friendly(what: str, d) -> str:
     tip = ""
     m = (msg or "").lower()
     if code == 1254045:
-        tip = ("\n➜ 这个应用写表不认字段 ID（fldXXXXXX），只认中文列名。"
-               "程序已自动换成列名重试；若还报错，到「设置」把字段映射直接填中文列名。")
+        tip = ("\n➜ 字段映射对不上当前这张表：换表后 fldXXXXXX 一定全变，列名也可能带后缀/竖线。"
+               "程序已改为「按列名写入」并重试；仍失败就把 feishu.fields 右边 7 个值改成"
+               "当前表的真实列名（一字不差）或真实字段 ID，删 .cache/field_mode.json 后重启面板。"
+               "\n   注意：自动切换只改「写入方式」，不会替你修正配置里的旧 ID / 错列名。")
     elif code in (99991672, 99991663, 99991668) or "scopes is required" in m \
             or "尚未开通" in msg or "access denied" in m:
         tip = SCOPE_FIX
@@ -322,7 +324,8 @@ class Feishu:
         except Exception:
             pass
         if self.log:
-            self.log("提示：该应用写表不认字段 ID（1254045），已自动切换为「按列名写入」，后续照常运行")
+            self.log("提示：写表撞到 1254045（字段映射对不上当前表），已切换为「按列名写入」重试；"
+                     "若仍失败，检查 feishu.fields 是不是还留着旧表的 ID / 简化列名")
         return True
 
     # ---------- 记录 ----------

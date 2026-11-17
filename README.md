@@ -329,7 +329,7 @@ clipboard_sync/
 | `1254041` TableIdNotFound | `app_token` 还指向旧表，但 `table_id` 已经换成新表。换表见下方清单 |
 | `1254005` WrongViewId | `view_id` 是旧表视图，或没填 |
 | `1254060` TextFieldConvFail | 默认值被写成 YAML 列表（「终端类型」下面两行 `- 网吧`）。改成单行 `终端类型: 网吧` |
-| `1254045` FieldNameNotFound | 字段名/字段 ID 映射不对 → 面板设置里检查字段映射 |
+| `1254045` FieldNameNotFound | `feishu.fields` 右边还是**旧表的 fldXXXXXX** 或简化列名。程序会自动切成「按列名写入」重试，但**不会替你改配置**：填当前表的真实列名（一字不差，含括号/竖线）或真实字段 ID，删 `.cache/field_mode.json` 后重启 |
 | 写入落到随机一行 | `feishu.view_id` 没填或填错（大小写敏感） |
 | 一直"未识别" | 看 `ocr.cpu_only` 是不是被改成了 `true`；或截图只截到一半没有关键词 |
 | 某屏位少一张图 | 看日志里有没有红色失败行。上传失败会保留在待传队列，重启面板自动补传 |
